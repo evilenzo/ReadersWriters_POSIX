@@ -29,8 +29,6 @@
 #include <pthread.h>
 #include <unistd.h>
 
-/// Общий ресурс для чтения-записи
-int resource = 1;
 
 // Mutex для читателей
 struct ReadMutex {
@@ -77,6 +75,8 @@ struct WritersCount {
 } writers_count;
 
 void* reader(void* args) {
+    const int* resource = (int*)args;
+
     int repeats_num = NUM_OF_REPEATS;
 
     while (repeats_num > 0) {
@@ -97,7 +97,7 @@ void* reader(void* args) {
 
         // Читаем и выводим
         pthread_mutex_lock(&output_mutex.m);
-        std::cout << resource << std::endl;
+        std::cout << *resource << std::endl;
         pthread_mutex_unlock(&output_mutex.m);
 
         // Блокируем mutex количества читателей
@@ -129,6 +129,8 @@ void* reader(void* args) {
 }
 
 void* writer(void* args) {
+    int* resource = (int*)args;
+
     int repeats_num = NUM_OF_REPEATS;
 
     while (repeats_num > 0) {
@@ -149,7 +151,7 @@ void* writer(void* args) {
         pthread_mutex_lock(&write_mutex.m);
 
         // Пишем
-        ++resource;
+        (*resource)++;
 
         // Разблокируем mutex на запись
         pthread_mutex_unlock(&write_mutex.m);
@@ -183,16 +185,19 @@ void* writer(void* args) {
 }
 
 int main() {
+    /// Общий ресурс для чтения-записи
+    int resource = 1;
+
     pthread_t threads[READERS_NUM + WRITERS_NUM];
 
     std::size_t i = 0;
 
     for (; i < READERS_NUM; ++i) {
-        pthread_create(&threads[i], NULL, reader, NULL);
+        pthread_create(&threads[i], NULL, reader, &resource);
     }
 
     for (int j = 0; j < WRITERS_NUM; ++j, ++i) {
-        pthread_create(&threads[i], NULL, writer, NULL);
+        pthread_create(&threads[i], NULL, writer, &resource);
     }
 
     for (i = 0; i < READERS_NUM + WRITERS_NUM; ++i) {
