@@ -14,12 +14,12 @@
 
 
 #define READERS_AMOUNT 5
-#define WRITERS_AMOUNT 3
+#define WRITERS_AMOUNT 4
 
 #define REPEATS_AMOUNT 3
 
 #define READ_DELAY 2
-#define WRITE_DELAY 3
+#define WRITE_DELAY 2
 
 #define RANDOMIZE_DELAY true  // Randomly add 0-3 to upper values
 
@@ -32,36 +32,38 @@
 #include <random>
 
 
-template <typename T>
-struct SyncStorage;
 
-template <>
-struct SyncStorage<void> {
-  mutable pthread_mutex_t m = {};
+struct Mutex {
+  Mutex() { pthread_mutex_init(&m, nullptr); }
+  ~Mutex() { pthread_mutex_destroy(&m); }
 
-  SyncStorage() { pthread_mutex_init(&m, nullptr); }
-  ~SyncStorage() { pthread_mutex_destroy(&m); }
+  void lock() { pthread_mutex_lock(&m); }
+  void unlock() { pthread_mutex_unlock(&m); }
+
+ private:
+  pthread_mutex_t m = {};
 };
 
 template <typename T>
-struct SyncStorage : SyncStorage<void> {
+struct SyncStorage {
   T value = {};
+  mutable Mutex mtx;
 };
 
-struct ReadWriteSync {
-  explicit ReadWriteSync(uint32_t value_) : value(value_) {}
+struct SharedResource {
+  explicit SharedResource(uint32_t value_) : value(value_) {}
   uint32_t value;
 
-  SyncStorage<void> read;
-  SyncStorage<void> write;
-  SyncStorage<size_t> readers_count;
-  SyncStorage<size_t> writers_count;
+  mutable Mutex read;
+  mutable Mutex write;
+  mutable Mutex cout;
 
-  SyncStorage<void> cout;
+  mutable SyncStorage<size_t> readers_count;
+  mutable SyncStorage<size_t> writers_count;
 };
 
 void* reader(void* args) {
-  const auto resource = reinterpret_cast<ReadWriteSync*>(args);
+  auto resource = reinterpret_cast<const SharedResource*>(args);
 
   uint32_t repeats_amount = REPEATS_AMOUNT;
 
@@ -71,34 +73,34 @@ void* reader(void* args) {
 
   while (repeats_amount > 0) {
     // Adding ourselves to readers and locking write
-    pthread_mutex_lock(&resource->read.m);
-    pthread_mutex_lock(&resource->readers_count.m);
+    resource->read.lock();
+    resource->readers_count.mtx.lock();
 
     ++resource->readers_count.value;
     if (resource->readers_count.value == 1) {
-      pthread_mutex_lock(&resource->write.m);
+      resource->write.lock();
     }
 
-    pthread_mutex_unlock(&resource->readers_count.m);
-    pthread_mutex_unlock(&resource->read.m);
+    resource->readers_count.mtx.unlock();
+    resource->read.unlock();
 
 
     // Read and output
-    pthread_mutex_lock(&resource->cout.m);
+    resource->cout.lock();
     std::cout << resource->value << std::endl;
-    pthread_mutex_unlock(&resource->cout.m);
+    resource->cout.unlock();
 
 
     // Remove ourselves from readers and return access for writing if no more
     // readers exist
-    pthread_mutex_lock(&resource->readers_count.m);
+    resource->readers_count.mtx.lock();
 
     --resource->readers_count.value;
     if (resource->readers_count.value == 0) {
-      pthread_mutex_unlock(&resource->write.m);
+      resource->write.unlock();
     }
 
-    pthread_mutex_unlock(&resource->readers_count.m);
+    resource->readers_count.mtx.unlock();
 
 
     // Delay
@@ -114,7 +116,7 @@ void* reader(void* args) {
 }
 
 void* writer(void* args) {
-  const auto resource = reinterpret_cast<ReadWriteSync*>(args);
+  const auto resource = reinterpret_cast<SharedResource*>(args);
 
   uint32_t repeats_amount = REPEATS_AMOUNT;
 
@@ -124,31 +126,31 @@ void* writer(void* args) {
 
   while (repeats_amount > 0) {
     // Adding ourselves to writers and locking read
-    pthread_mutex_lock(&resource->writers_count.m);
+    resource->writers_count.mtx.lock();
 
     ++resource->writers_count.value;
     if (resource->writers_count.value == 1) {
-      pthread_mutex_lock(&resource->read.m);
+      resource->read.lock();
     }
 
-    pthread_mutex_unlock(&resource->writers_count.m);
+    resource->writers_count.mtx.unlock();
 
     // Writing
-    pthread_mutex_lock(&resource->write.m);
+    resource->write.lock();
     ++resource->value;
-    pthread_mutex_unlock(&resource->write.m);
+    resource->write.unlock();
 
 
     // Remove ourselves from writers and return access for reading if no more
     // writers exist
-    pthread_mutex_lock(&resource->writers_count.m);
+    resource->writers_count.mtx.lock();
 
     --resource->writers_count.value;
     if (resource->writers_count.value == 0) {
-      pthread_mutex_unlock(&resource->read.m);
+      resource->read.unlock();
     }
 
-    pthread_mutex_unlock(&resource->writers_count.m);
+    resource->writers_count.mtx.unlock();
 
 
     // Delay
@@ -164,7 +166,9 @@ void* writer(void* args) {
 }
 
 int main() {
-  ReadWriteSync resource{1};
+  // Shared resource to read-write
+  SharedResource resource{1};
+
   pthread_t threads[READERS_AMOUNT + WRITERS_AMOUNT];
   size_t i = 0;
 
