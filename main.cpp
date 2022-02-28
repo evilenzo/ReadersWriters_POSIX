@@ -33,6 +33,26 @@
 
 
 
+class Delayer {
+ public:
+  Delayer() : eng(r()), dist(0, 3) {}
+
+  void delay() {
+    uint randomized = 0;
+
+    if (RANDOMIZE_DELAY) {
+      randomized = dist(eng);
+    }
+
+    sleep(READ_DELAY + randomized);
+  }
+
+ private:
+  std::random_device r = {};
+  std::mt19937 eng;
+  std::uniform_int_distribution<uint> dist;
+};
+
 struct Mutex {
   Mutex() { pthread_mutex_init(&m, nullptr); }
   ~Mutex() { pthread_mutex_destroy(&m); }
@@ -65,11 +85,8 @@ struct SharedResource {
 void* reader(void* args) {
   auto resource = reinterpret_cast<const SharedResource*>(args);
 
+  Delayer delayer;
   uint32_t repeats_amount = REPEATS_AMOUNT;
-
-  std::random_device r;
-  std::mt19937 eng{r()};
-  std::uniform_int_distribution<int> dist(0, 3);
 
   while (repeats_amount > 0) {
     // Adding ourselves to readers and locking write
@@ -102,13 +119,8 @@ void* reader(void* args) {
 
     resource->readers_count.mtx.unlock();
 
+    delayer.delay();
 
-    // Delay
-    size_t randomized = 0;
-    if (RANDOMIZE_DELAY) {
-      randomized = dist(eng);
-    }
-    sleep(READ_DELAY + randomized);
     --repeats_amount;
   }
 
@@ -118,11 +130,8 @@ void* reader(void* args) {
 void* writer(void* args) {
   const auto resource = reinterpret_cast<SharedResource*>(args);
 
+  Delayer delayer;
   uint32_t repeats_amount = REPEATS_AMOUNT;
-
-  std::random_device r;
-  std::mt19937 eng{r()};
-  std::uniform_int_distribution<int> dist(0, 3);
 
   while (repeats_amount > 0) {
     // Adding ourselves to writers and locking read
@@ -152,13 +161,8 @@ void* writer(void* args) {
 
     resource->writers_count.mtx.unlock();
 
+    delayer.delay();
 
-    // Delay
-    int randomized = 0;
-    if (RANDOMIZE_DELAY) {
-      randomized = dist(eng);
-    }
-    sleep(WRITE_DELAY + randomized);
     --repeats_amount;
   }
 
@@ -166,9 +170,7 @@ void* writer(void* args) {
 }
 
 int main() {
-  // Shared resource to read-write
-  SharedResource resource{1};
-
+  SharedResource resource{1};  // Shared resource for read-write
   pthread_t threads[READERS_AMOUNT + WRITERS_AMOUNT];
   size_t i = 0;
 
