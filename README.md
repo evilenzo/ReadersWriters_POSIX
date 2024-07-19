@@ -1,3 +1,5 @@
+# DISCLAIMER - This is an interview project, no need in review/comments
+
 ## Readers-Writers problem solution
 
 ### Using POSIX API
